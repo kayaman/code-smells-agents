@@ -1,0 +1,136 @@
+# Minimal Permissions PR Validation
+# Use this when you can't get write permissions to post PR comments
+# Results are shown in the GitHub Actions job summary
+
+name: PR Code Analysis (Minimal)
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  # Can also run manually for testing
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to analyze'
+        required: false
+        type: number
+
+# Minimal permissions - only needs to read the code
+permissions:
+  contents: read
+  # pull-requests: read  # Implicit with contents
+
+env:
+  DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+  DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+  DATABRICKS_ENDPOINT: ${{ vars.DATABRICKS_ENDPOINT || 'code-review-v1' }}
+
+jobs:
+  analyze:
+    name: Analyze PR
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Get PR diff
+        id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number || github.event.inputs.pr_number }}"
+          
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No PR number available, generating diff from HEAD~1"
+            git diff HEAD~1 > pr.diff
+          else
+            gh pr diff "$PR_NUMBER" > pr.diff || git diff origin/main...HEAD > pr.diff
+          fi
+          
+          # Get file list
+          if [ -f pr.diff ]; then
+            grep "^diff --git" pr.diff | sed 's/diff --git a\/.* b\///' > changed_files.txt
+            echo "files_count=$(wc -l < changed_files.txt)" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+      
+      - name: Run analysis
+        id: analyze
+        run: |
+          # Run common rules
+          python scripts/analyze_code.py \
+            --diff pr.diff \
+            --rules rules/common.yaml \
+            --prompt prompts/system_base.md \
+            --output results/common.json \
+            --strictness normal
+          
+          # Detect languages and run language-specific analysis
+          for lang in python javascript java; do
+            if grep -qE "\.$lang$|\.py$|\.js$|\.ts$|\.jsx$|\.tsx$" changed_files.txt 2>/dev/null; then
+              if [ -f "rules/${lang}.yaml" ]; then
+                echo "Running $lang analysis..."
+                python scripts/analyze_code.py \
+                  --diff pr.diff \
+                  --rules rules/${lang}.yaml \
+                  --prompt prompts/system_base.md \
+                  --output results/${lang}.json \
+                  --language $lang || true
+              fi
+            fi
+          done
+        continue-on-error: true
+      
+      - name: Generate summary
+        id: summary
+        run: |
+          python scripts/format_review.py \
+            --results-dir results \
+            --output review.md \
+            --summary summary.json
+          
+          # Output for job summary
+          echo "has_violations=$(jq -r '.has_violations' summary.json)" >> $GITHUB_OUTPUT
+          echo "total=$(jq -r '.total_violations' summary.json)" >> $GITHUB_OUTPUT
+          echo "severity=$(jq -r '.max_severity' summary.json)" >> $GITHUB_OUTPUT
+      
+      - name: Write Job Summary
+        run: |
+          # Add summary to GitHub Actions job summary
+          cat review.md >> $GITHUB_STEP_SUMMARY
+          
+          # Add extra info
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "### Analysis Details" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Files analyzed:** ${{ steps.diff.outputs.files_count }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total violations:** ${{ steps.summary.outputs.total }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Max severity:** ${{ steps.summary.outputs.severity }}" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Upload results artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-results
+          path: |
+            results/
+            review.md
+            summary.json
+          retention-days: 7
+      
+      - name: Set exit status
+        if: steps.summary.outputs.severity == 'critical'
+        run: |
+          echo "::error::Critical violations found in PR"
+          exit 1

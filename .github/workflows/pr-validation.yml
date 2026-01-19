@@ -1,0 +1,366 @@
+name: PR Code Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    # Optionally limit to specific paths
+    # paths:
+    #   - 'src/**'
+    #   - '*.py'
+    #   - '*.java'
+
+# Minimal permissions - this should be easy to get approved
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+  DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+  DATABRICKS_ENDPOINT: ${{ vars.DATABRICKS_ENDPOINT || 'code-review-v1' }}
+  MAX_FILES_TO_ANALYZE: 20
+  MAX_DIFF_SIZE_KB: 500
+
+jobs:
+  # ============================================
+  # JOB 1: Gather PR context and detect languages
+  # ============================================
+  prepare:
+    name: Prepare Analysis
+    runs-on: ubuntu-latest
+    outputs:
+      languages: ${{ steps.detect.outputs.languages }}
+      file_matrix: ${{ steps.detect.outputs.file_matrix }}
+      should_analyze: ${{ steps.detect.outputs.should_analyze }}
+      is_contractor: ${{ steps.detect.outputs.is_contractor }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Get PR diff
+        id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Get the diff for changed files
+          gh pr diff ${{ github.event.pull_request.number }} > pr.diff
+          
+          # Get list of changed files
+          gh pr view ${{ github.event.pull_request.number }} --json files -q '.files[].path' > changed_files.txt
+          
+          # Check diff size
+          DIFF_SIZE=$(stat -f%z pr.diff 2>/dev/null || stat -c%s pr.diff)
+          DIFF_SIZE_KB=$((DIFF_SIZE / 1024))
+          
+          if [ $DIFF_SIZE_KB -gt $MAX_DIFF_SIZE_KB ]; then
+            echo "diff_too_large=true" >> $GITHUB_OUTPUT
+            echo "::warning::Diff size (${DIFF_SIZE_KB}KB) exceeds limit (${MAX_DIFF_SIZE_KB}KB)"
+          else
+            echo "diff_too_large=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Detect languages and build matrix
+        id: detect
+        run: |
+          # Language detection based on file extensions
+          declare -A lang_files
+          
+          while IFS= read -r file; do
+            ext="${file##*.}"
+            case "$ext" in
+              py)
+                lang_files["python"]+="$file "
+                ;;
+              java)
+                lang_files["java"]+="$file "
+                ;;
+              js|jsx|ts|tsx)
+                lang_files["javascript"]+="$file "
+                ;;
+              go)
+                lang_files["go"]+="$file "
+                ;;
+              tf|hcl)
+                lang_files["terraform"]+="$file "
+                ;;
+              yaml|yml)
+                # Check if it's k8s
+                if grep -l "apiVersion:" "$file" 2>/dev/null; then
+                  lang_files["kubernetes"]+="$file "
+                else
+                  lang_files["yaml"]+="$file "
+                fi
+                ;;
+              sh|bash)
+                lang_files["shell"]+="$file "
+                ;;
+            esac
+          done < changed_files.txt
+          
+          # Build JSON arrays for matrix
+          languages="["
+          file_matrix="{"
+          first=true
+          
+          for lang in "${!lang_files[@]}"; do
+            if [ "$first" = true ]; then
+              first=false
+            else
+              languages+=","
+              file_matrix+=","
+            fi
+            languages+="\"$lang\""
+            # Trim trailing space and convert to JSON array
+            files=$(echo "${lang_files[$lang]}" | xargs | tr ' ' '\n' | jq -R . | jq -s .)
+            file_matrix+="\"$lang\":$files"
+          done
+          
+          languages+="]"
+          file_matrix+="}"
+          
+          echo "languages=$languages" >> $GITHUB_OUTPUT
+          echo "file_matrix=$file_matrix" >> $GITHUB_OUTPUT
+          
+          # Determine if we should analyze
+          if [ "$languages" = "[]" ]; then
+            echo "should_analyze=false" >> $GITHUB_OUTPUT
+          else
+            echo "should_analyze=true" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check if PR author is a contractor (customize this logic)
+          PR_AUTHOR="${{ github.event.pull_request.user.login }}"
+          CONTRACTOR_PATTERNS="contractor|external|vendor|consultant"
+          
+          if echo "$PR_AUTHOR" | grep -qiE "$CONTRACTOR_PATTERNS"; then
+            echo "is_contractor=true" >> $GITHUB_OUTPUT
+            echo "::notice::PR from contractor - applying stricter validation"
+          else
+            echo "is_contractor=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Upload diff artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-diff
+          path: |
+            pr.diff
+            changed_files.txt
+          retention-days: 1
+
+  # ============================================
+  # JOB 2: Run common rules analysis
+  # ============================================
+  analyze-common:
+    name: Common Rules
+    needs: prepare
+    if: needs.prepare.outputs.should_analyze == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Download diff
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-diff
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+      
+      - name: Run common rules analysis
+        id: analyze
+        env:
+          IS_CONTRACTOR: ${{ needs.prepare.outputs.is_contractor }}
+        run: |
+          python scripts/analyze_code.py \
+            --diff pr.diff \
+            --rules rules/common.yaml \
+            --prompt prompts/system_base.md \
+            --output results/common.json \
+            --strictness ${{ needs.prepare.outputs.is_contractor == 'true' && 'high' || 'normal' }}
+      
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-common
+          path: results/common.json
+
+  # ============================================
+  # JOB 3: Language-specific analysis (matrix)
+  # ============================================
+  analyze-language:
+    name: Analyze ${{ matrix.language }}
+    needs: prepare
+    if: needs.prepare.outputs.should_analyze == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJson(needs.prepare.outputs.languages) }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Download diff
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-diff
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+      
+      - name: Extract language-specific files from diff
+        run: |
+          # Filter diff to only include files for this language
+          python scripts/filter_diff.py \
+            --diff pr.diff \
+            --files '${{ toJson(fromJson(needs.prepare.outputs.file_matrix)[matrix.language]) }}' \
+            --output filtered.diff
+      
+      - name: Run language-specific analysis
+        id: analyze
+        env:
+          IS_CONTRACTOR: ${{ needs.prepare.outputs.is_contractor }}
+        run: |
+          python scripts/analyze_code.py \
+            --diff filtered.diff \
+            --rules rules/${{ matrix.language }}.yaml \
+            --prompt prompts/language_specific/${{ matrix.language }}.md \
+            --base-prompt prompts/system_base.md \
+            --output results/${{ matrix.language }}.json \
+            --language ${{ matrix.language }} \
+            --strictness ${{ needs.prepare.outputs.is_contractor == 'true' && 'high' || 'normal' }}
+      
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ matrix.language }}
+          path: results/${{ matrix.language }}.json
+
+  # ============================================
+  # JOB 4: Aggregate and post review
+  # ============================================
+  post-review:
+    name: Post Review
+    needs: [prepare, analyze-common, analyze-language]
+    if: always() && needs.prepare.outputs.should_analyze == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Download all results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: results-*
+          path: all-results
+          merge-multiple: true
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Aggregate results and format review
+        id: format
+        run: |
+          python scripts/format_review.py \
+            --results-dir all-results \
+            --output review.md \
+            --summary summary.json
+          
+          # Set outputs for the review
+          echo "has_violations=$(jq -r '.has_violations' summary.json)" >> $GITHUB_OUTPUT
+          echo "violation_count=$(jq -r '.total_violations' summary.json)" >> $GITHUB_OUTPUT
+          echo "severity=$(jq -r '.max_severity' summary.json)" >> $GITHUB_OUTPUT
+      
+      - name: Post PR review comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reviewBody = fs.readFileSync('review.md', 'utf8');
+            const summary = JSON.parse(fs.readFileSync('summary.json', 'utf8'));
+            
+            // Find existing bot comment to update (avoid spam)
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const botComment = comments.find(c => 
+              c.user.type === 'Bot' && 
+              c.body.includes('<!-- pr-validation-agent -->')
+            );
+            
+            const commentBody = `<!-- pr-validation-agent -->
+            ${reviewBody}`;
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: commentBody
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: commentBody
+              });
+            }
+            
+            // Optionally post inline comments for specific violations
+            if (summary.inline_comments && summary.inline_comments.length > 0) {
+              for (const comment of summary.inline_comments.slice(0, 20)) {
+                try {
+                  await github.rest.pulls.createReviewComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: context.issue.number,
+                    body: comment.body,
+                    path: comment.path,
+                    line: comment.line,
+                    side: 'RIGHT'
+                  });
+                } catch (e) {
+                  console.log(`Could not post inline comment: ${e.message}`);
+                }
+              }
+            }
+      
+      - name: Set job status based on violations
+        if: steps.format.outputs.has_violations == 'true'
+        run: |
+          SEVERITY="${{ steps.format.outputs.severity }}"
+          COUNT="${{ steps.format.outputs.violation_count }}"
+          
+          echo "::warning::Found $COUNT violation(s) with max severity: $SEVERITY"
+          
+          # Only fail on critical violations (configurable)
+          if [ "$SEVERITY" = "critical" ]; then
+            echo "::error::Critical violations found - failing check"
+            exit 1
+          fi

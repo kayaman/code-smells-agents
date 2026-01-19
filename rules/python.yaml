@@ -1,0 +1,302 @@
+# Python-Specific Rules
+# Extends common rules with Python-specific standards
+
+version: "1.0"
+last_updated: "2024-01-15"
+maintainer: "platform-team@company.com"
+
+metadata:
+  name: "Python Standards"
+  description: "Python-specific coding standards and best practices"
+  applies_to: ["py"]
+  python_version: "3.10+"
+
+rules:
+  # ===========================================
+  # Type Safety
+  # ===========================================
+  type_safety:
+    - id: PY-TYPE-001
+      name: "Type Hints Required"
+      severity: medium
+      description: |
+        All function parameters and return types must have type hints.
+        This improves IDE support and enables static analysis.
+      bad_example: |
+        def calculate_total(items, tax_rate):
+            return sum(i.price for i in items) * (1 + tax_rate)
+      good_example: |
+        def calculate_total(items: list[Item], tax_rate: float) -> Decimal:
+            return sum(i.price for i in items) * Decimal(1 + tax_rate)
+            
+    - id: PY-TYPE-002
+      name: "No Any Type"
+      severity: low
+      description: |
+        Avoid using `Any` type except in unavoidable circumstances.
+        Prefer specific types or generics.
+      bad_example: "def process(data: Any) -> Any:"
+      good_example: "def process(data: dict[str, int]) -> list[Result]:"
+      
+    - id: PY-TYPE-003
+      name: "Use Optional for Nullable"
+      severity: low
+      description: |
+        Use Optional[T] or T | None for parameters that can be None.
+        Don't use None as default without proper typing.
+      bad_example: "def fetch(id: int, cache=None):"
+      good_example: "def fetch(id: int, cache: Cache | None = None):"
+
+  # ===========================================
+  # Import Rules
+  # ===========================================
+  imports:
+    - id: PY-IMP-001
+      name: "No Wildcard Imports"
+      severity: high
+      description: |
+        Wildcard imports (from x import *) are prohibited. They pollute
+        the namespace and make dependencies unclear.
+      bad_example: "from utils import *"
+      good_example: "from utils import specific_function, SpecificClass"
+      
+    - id: PY-IMP-002
+      name: "Import Order"
+      severity: low
+      description: |
+        Imports should be grouped: stdlib, third-party, local. Use isort
+        or similar tool for consistent ordering.
+        
+    - id: PY-IMP-003
+      name: "No Circular Imports"
+      severity: high
+      description: |
+        Circular imports indicate poor module design. Refactor to eliminate
+        circular dependencies.
+        
+    - id: PY-IMP-004
+      name: "Avoid Import Inside Functions"
+      severity: medium
+      description: |
+        Imports should be at module level except for optional dependencies
+        or breaking circular imports (which should be refactored).
+
+  # ===========================================
+  # Exception Handling
+  # ===========================================
+  exceptions:
+    - id: PY-EXC-001
+      name: "No Bare Except"
+      severity: critical
+      description: |
+        Never use bare `except:` clauses. Always catch specific exceptions.
+      bad_example: |
+        try:
+            risky_operation()
+        except:
+            pass
+      good_example: |
+        try:
+            risky_operation()
+        except (ValueError, KeyError) as e:
+            logger.error("Operation failed", exc_info=True)
+            
+    - id: PY-EXC-002
+      name: "No Exception Swallowing"
+      severity: high
+      description: |
+        Exceptions should never be silently ignored. At minimum, log them.
+      bad_example: |
+        except ValueError:
+            pass
+      good_example: |
+        except ValueError as e:
+            logger.warning(f"Non-critical error: {e}")
+            
+    - id: PY-EXC-003
+      name: "Use Custom Exceptions"
+      severity: medium
+      description: |
+        Define custom exception classes for domain-specific errors rather
+        than using generic exceptions.
+      bad_example: 'raise Exception("User not found")'
+      good_example: 'raise UserNotFoundError(user_id=user_id)'
+      
+    - id: PY-EXC-004
+      name: "Exception Chaining"
+      severity: low
+      description: |
+        When re-raising exceptions, use `raise ... from e` to preserve
+        the original traceback.
+      bad_example: 'raise CustomError(str(e))'
+      good_example: 'raise CustomError(str(e)) from e'
+
+  # ===========================================
+  # Data Classes & Models
+  # ===========================================
+  data_models:
+    - id: PY-DATA-001
+      name: "Use Dataclasses or Pydantic"
+      severity: medium
+      description: |
+        Use dataclasses or Pydantic models for data structures instead
+        of plain dictionaries or tuples.
+      bad_example: |
+        user = {"name": "John", "age": 30}
+      good_example: |
+        @dataclass
+        class User:
+            name: str
+            age: int
+            
+    - id: PY-DATA-002
+      name: "Immutable by Default"
+      severity: low
+      description: |
+        Prefer frozen dataclasses for data that shouldn't change after creation.
+      good_example: "@dataclass(frozen=True)"
+      
+    - id: PY-DATA-003
+      name: "No Mutable Default Arguments"
+      severity: critical
+      description: |
+        Never use mutable objects (list, dict, set) as default arguments.
+      bad_example: "def add_item(item, items=[]):"
+      good_example: "def add_item(item, items: list | None = None):"
+
+  # ===========================================
+  # Async/Await
+  # ===========================================
+  async_code:
+    - id: PY-ASYNC-001
+      name: "No Blocking in Async"
+      severity: high
+      description: |
+        Async functions must not call blocking operations. Use async
+        equivalents or run in executor.
+      bad_example: |
+        async def fetch_data():
+            return requests.get(url)  # Blocking!
+      good_example: |
+        async def fetch_data():
+            async with aiohttp.ClientSession() as session:
+                return await session.get(url)
+                
+    - id: PY-ASYNC-002
+      name: "Proper Context Managers"
+      severity: medium
+      description: |
+        Use async context managers for resources in async code.
+        
+    - id: PY-ASYNC-003
+      name: "No Fire-and-Forget Tasks"
+      severity: high
+      description: |
+        All created tasks should be tracked and awaited. Fire-and-forget
+        tasks can be silently cancelled.
+      bad_example: "asyncio.create_task(some_work())"
+      good_example: |
+        task = asyncio.create_task(some_work())
+        background_tasks.add(task)
+        task.add_done_callback(background_tasks.discard)
+
+  # ===========================================
+  # Testing
+  # ===========================================
+  testing:
+    - id: PY-TEST-001
+      name: "Test Coverage Required"
+      severity: medium
+      description: |
+        New code must have corresponding tests. Minimum 80% coverage for
+        business logic.
+        
+    - id: PY-TEST-002
+      name: "Use Pytest Fixtures"
+      severity: low
+      description: |
+        Use pytest fixtures for test setup rather than setUp methods or
+        inline creation.
+        
+    - id: PY-TEST-003
+      name: "No Sleep in Tests"
+      severity: high
+      description: |
+        Tests should not use time.sleep(). Use mocking or async waiting.
+      bad_example: "time.sleep(1)  # Wait for async process"
+      good_example: "await asyncio.wait_for(condition(), timeout=1.0)"
+      
+    - id: PY-TEST-004
+      name: "Test Naming Convention"
+      severity: low
+      description: |
+        Test functions should follow naming pattern:
+        test_<unit>_<scenario>_<expected_result>
+      good_example: "def test_user_service_create_with_invalid_email_raises_validation_error():"
+
+  # ===========================================
+  # FastAPI / Django Specific
+  # ===========================================
+  web_frameworks:
+    - id: PY-WEB-001
+      name: "Request Validation"
+      severity: high
+      description: |
+        All API endpoints must validate request data using Pydantic models
+        (FastAPI) or serializers (Django REST).
+        
+    - id: PY-WEB-002
+      name: "No Business Logic in Views"
+      severity: medium
+      description: |
+        Views/endpoints should be thin. Business logic belongs in services.
+        
+    - id: PY-WEB-003
+      name: "Async Endpoints for I/O"
+      severity: medium
+      description: |
+        FastAPI endpoints that perform I/O should be async.
+
+  # ===========================================
+  # Company Python Standards
+  # ===========================================
+  company_python:
+    - id: PY-CORP-001
+      name: "Use Company Base Classes"
+      severity: medium
+      description: |
+        Services must inherit from CompanyBaseService. API clients must
+        use CompanyHttpClient.
+        
+    - id: PY-CORP-002
+      name: "Structured Logging"
+      severity: medium
+      description: |
+        Use structlog with company configuration. Include correlation_id
+        in all log entries.
+      bad_example: 'logger.info(f"User {user_id} logged in")'
+      good_example: 'logger.info("user_logged_in", user_id=user_id, source="web")'
+      
+    - id: PY-CORP-003
+      name: "Configuration via Environment"
+      severity: high
+      description: |
+        All configuration must come from environment variables or config
+        service. No hardcoded configuration values.
+      bad_example: 'DATABASE_URL = "postgresql://localhost/mydb"'
+      good_example: 'DATABASE_URL = config.get("DATABASE_URL")'
+
+# Tooling configuration recommendations
+tooling:
+  linters:
+    - ruff
+    - mypy
+  formatters:
+    - black
+    - isort
+  pre_commit:
+    enabled: true
+    hooks:
+      - ruff
+      - mypy --strict
+      - black --check

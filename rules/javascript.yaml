@@ -1,0 +1,326 @@
+# JavaScript/TypeScript-Specific Rules
+# Extends common rules with JS/TS-specific standards
+
+version: "1.0"
+last_updated: "2024-01-15"
+maintainer: "platform-team@company.com"
+
+metadata:
+  name: "JavaScript/TypeScript Standards"
+  description: "JS/TS coding standards and React best practices"
+  applies_to: ["js", "jsx", "ts", "tsx"]
+
+rules:
+  # ===========================================
+  # TypeScript Type Safety
+  # ===========================================
+  type_safety:
+    - id: JS-TYPE-001
+      name: "No 'any' Type"
+      severity: medium
+      description: |
+        Avoid using 'any' type. Use 'unknown' for truly unknown types,
+        or define proper interfaces/types.
+      bad_example: "function process(data: any): any"
+      good_example: "function process(data: UserData): ProcessResult"
+      
+    - id: JS-TYPE-002
+      name: "Explicit Return Types"
+      severity: low
+      description: |
+        Functions should have explicit return type annotations, especially
+        for exported functions.
+      bad_example: "export function calculate(x: number) { return x * 2; }"
+      good_example: "export function calculate(x: number): number { return x * 2; }"
+      
+    - id: JS-TYPE-003
+      name: "No Type Assertions on Unknown"
+      severity: medium
+      description: |
+        Avoid using type assertions (as Type) without validation.
+        Use type guards or validation libraries.
+      bad_example: "const user = data as User;"
+      good_example: |
+        if (isUser(data)) {
+          const user = data;
+        }
+        
+    - id: JS-TYPE-004
+      name: "Strict Null Checks"
+      severity: high
+      description: |
+        Code must handle null/undefined properly. Use optional chaining,
+        nullish coalescing, or explicit checks.
+      bad_example: "const name = user.profile.name;"
+      good_example: "const name = user?.profile?.name ?? 'Unknown';"
+
+  # ===========================================
+  # Async/Await Patterns
+  # ===========================================
+  async_patterns:
+    - id: JS-ASYNC-001
+      name: "No Floating Promises"
+      severity: high
+      description: |
+        All Promises must be awaited, returned, or explicitly handled.
+        No fire-and-forget promises.
+      bad_example: |
+        function save() {
+          api.save(data); // Promise ignored!
+        }
+      good_example: |
+        async function save(): Promise<void> {
+          await api.save(data);
+        }
+        
+    - id: JS-ASYNC-002
+      name: "Proper Error Handling in Async"
+      severity: high
+      description: |
+        Async functions must have try/catch or .catch() for error handling.
+      bad_example: |
+        async function fetchData() {
+          const response = await fetch(url);
+          return response.json();
+        }
+      good_example: |
+        async function fetchData(): Promise<Data | null> {
+          try {
+            const response = await fetch(url);
+            return response.json();
+          } catch (error) {
+            logger.error('Fetch failed', { error });
+            return null;
+          }
+        }
+        
+    - id: JS-ASYNC-003
+      name: "Avoid Async in Loops"
+      severity: medium
+      description: |
+        Use Promise.all() for parallel operations instead of await in loops.
+      bad_example: |
+        for (const item of items) {
+          await processItem(item); // Sequential, slow
+        }
+      good_example: |
+        await Promise.all(items.map(item => processItem(item)));
+
+  # ===========================================
+  # React Patterns
+  # ===========================================
+  react:
+    - id: JS-REACT-001
+      name: "No Direct State Mutation"
+      severity: critical
+      description: |
+        Never mutate state directly. Always use setState or state setters.
+      bad_example: |
+        this.state.items.push(newItem);
+        // or
+        items.push(newItem);
+        setItems(items);
+      good_example: |
+        setItems([...items, newItem]);
+        // or
+        setItems(prev => [...prev, newItem]);
+        
+    - id: JS-REACT-002
+      name: "Use useCallback for Event Handlers"
+      severity: medium
+      description: |
+        Event handlers passed to child components should be memoized
+        with useCallback to prevent unnecessary re-renders.
+      bad_example: |
+        <Button onClick={() => handleClick(id)} />
+      good_example: |
+        const handleButtonClick = useCallback(() => {
+          handleClick(id);
+        }, [id, handleClick]);
+        <Button onClick={handleButtonClick} />
+        
+    - id: JS-REACT-003
+      name: "Proper Dependency Arrays"
+      severity: high
+      description: |
+        useEffect and other hooks must have complete dependency arrays.
+        ESLint exhaustive-deps rule should be followed.
+      bad_example: |
+        useEffect(() => {
+          fetchUser(userId);
+        }, []); // Missing userId dependency
+      good_example: |
+        useEffect(() => {
+          fetchUser(userId);
+        }, [userId, fetchUser]);
+        
+    - id: JS-REACT-004
+      name: "No Inline Object/Array Props"
+      severity: low
+      description: |
+        Avoid inline object or array definitions in JSX as they cause
+        unnecessary re-renders.
+      bad_example: |
+        <Component style={{ margin: 10 }} data={[1, 2, 3]} />
+      good_example: |
+        const style = useMemo(() => ({ margin: 10 }), []);
+        const data = useMemo(() => [1, 2, 3], []);
+        <Component style={style} data={data} />
+        
+    - id: JS-REACT-005
+      name: "Key Prop Required"
+      severity: high
+      description: |
+        List items must have unique, stable key props. Don't use array index
+        as key unless the list is static and never reordered.
+      bad_example: |
+        items.map((item, index) => <Item key={index} {...item} />)
+      good_example: |
+        items.map(item => <Item key={item.id} {...item} />)
+
+  # ===========================================
+  # Security
+  # ===========================================
+  security:
+    - id: JS-SEC-001
+      name: "No dangerouslySetInnerHTML"
+      severity: critical
+      description: |
+        Avoid dangerouslySetInnerHTML. If absolutely necessary, sanitize
+        the content with DOMPurify or similar.
+      bad_example: |
+        <div dangerouslySetInnerHTML={{ __html: userContent }} />
+      good_example: |
+        <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(userContent) }} />
+        
+    - id: JS-SEC-002
+      name: "No eval or Function constructor"
+      severity: critical
+      description: |
+        Never use eval(), new Function(), or setTimeout/setInterval with strings.
+      bad_example: |
+        eval(userInput);
+        new Function(code)();
+        setTimeout("doSomething()", 1000);
+      good_example: |
+        // Use JSON.parse for data
+        JSON.parse(userInput);
+        // Use function references
+        setTimeout(doSomething, 1000);
+        
+    - id: JS-SEC-003
+      name: "Validate External URLs"
+      severity: high
+      description: |
+        URLs from user input must be validated before use in links,
+        redirects, or fetch calls.
+      bad_example: |
+        window.location.href = userProvidedUrl;
+      good_example: |
+        if (isValidRedirectUrl(userProvidedUrl)) {
+          window.location.href = userProvidedUrl;
+        }
+
+  # ===========================================
+  # Error Handling
+  # ===========================================
+  error_handling:
+    - id: JS-ERR-001
+      name: "No Empty Catch Blocks"
+      severity: high
+      description: |
+        Catch blocks must handle or log errors, not silently swallow them.
+      bad_example: |
+        try {
+          riskyOperation();
+        } catch (e) {}
+      good_example: |
+        try {
+          riskyOperation();
+        } catch (error) {
+          logger.error('Operation failed', { error });
+          throw new OperationError('Failed to complete', { cause: error });
+        }
+        
+    - id: JS-ERR-002
+      name: "Use Error Boundaries"
+      severity: medium
+      description: |
+        React components should be wrapped in Error Boundaries to prevent
+        crashes from propagating.
+
+  # ===========================================
+  # Module Patterns
+  # ===========================================
+  modules:
+    - id: JS-MOD-001
+      name: "Named Exports Preferred"
+      severity: low
+      description: |
+        Prefer named exports over default exports for better refactoring
+        and IDE support.
+      bad_example: |
+        export default function MyComponent() {}
+      good_example: |
+        export function MyComponent() {}
+        
+    - id: JS-MOD-002
+      name: "No Circular Dependencies"
+      severity: high
+      description: |
+        Circular imports indicate poor module design and can cause
+        runtime issues.
+        
+    - id: JS-MOD-003
+      name: "Barrel Files for Public API"
+      severity: low
+      description: |
+        Use index.ts barrel files to define the public API of modules.
+        Internal utilities should not be exported.
+
+  # ===========================================
+  # Company Standards
+  # ===========================================
+  company_standards:
+    - id: JS-CORP-001
+      name: "Use Company UI Components"
+      severity: medium
+      description: |
+        Use company design system components instead of raw HTML elements
+        or third-party UI libraries.
+      bad_example: |
+        <button onClick={handleClick}>Submit</button>
+      good_example: |
+        <Button variant="primary" onClick={handleClick}>Submit</Button>
+        
+    - id: JS-CORP-002
+      name: "Internationalization Required"
+      severity: medium
+      description: |
+        All user-facing strings must use the i18n translation system.
+      bad_example: |
+        <h1>Welcome to the app</h1>
+      good_example: |
+        <h1>{t('welcome.title')}</h1>
+        
+    - id: JS-CORP-003
+      name: "Use Company HTTP Client"
+      severity: high
+      description: |
+        API calls must use the company HTTP client which handles auth,
+        retries, and error tracking.
+      bad_example: |
+        fetch('/api/users')
+      good_example: |
+        apiClient.get('/users')
+
+# Tooling configuration
+tooling:
+  linters:
+    - eslint
+    - "@typescript-eslint"
+  formatters:
+    - prettier
+  plugins:
+    - eslint-plugin-react
+    - eslint-plugin-react-hooks

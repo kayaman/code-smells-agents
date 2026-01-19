@@ -1,0 +1,257 @@
+# Common Rules - Apply to all code regardless of language
+# These represent company-wide standards and policies
+
+version: "1.0"
+last_updated: "2024-01-15"
+maintainer: "platform-team@company.com"
+
+metadata:
+  name: "Company Common Standards"
+  description: "Universal rules that apply to all code submissions"
+  applies_to: ["all"]
+
+rules:
+  # ===========================================
+  # Security Rules - Critical Priority
+  # ===========================================
+  security:
+    - id: SEC-001
+      name: "No Hardcoded Secrets"
+      severity: critical
+      description: |
+        Code must not contain hardcoded passwords, API keys, tokens, or other secrets.
+        This includes test credentials that could be mistaken for real ones.
+      patterns:
+        - "password\\s*=\\s*['\"][^'\"]+['\"]"
+        - "api_key\\s*=\\s*['\"][^'\"]+['\"]"
+        - "secret\\s*=\\s*['\"][^'\"]+['\"]"
+        - "token\\s*=\\s*['\"][A-Za-z0-9_-]{20,}['\"]"
+      bad_example: "API_KEY = 'sk-abc123xyz'"
+      good_example: "API_KEY = os.environ.get('API_KEY')"
+      
+    - id: SEC-002
+      name: "No SQL Injection Vulnerabilities"
+      severity: critical
+      description: |
+        All database queries must use parameterized queries or ORM methods.
+        String concatenation or formatting in SQL queries is prohibited.
+      bad_example: "cursor.execute(f\"SELECT * FROM users WHERE id = {user_id}\")"
+      good_example: "cursor.execute(\"SELECT * FROM users WHERE id = %s\", (user_id,))"
+      
+    - id: SEC-003
+      name: "Input Validation Required"
+      severity: high
+      description: |
+        All external inputs must be validated before use.
+        This includes API parameters, user inputs, and file contents.
+      
+    - id: SEC-004
+      name: "No Disabled Security Features"
+      severity: critical
+      description: |
+        Code must not disable SSL verification, CSRF protection, or other security features.
+      patterns:
+        - "verify\\s*=\\s*False"
+        - "ssl\\s*=\\s*False"
+        - "@csrf_exempt"
+      bad_example: "requests.get(url, verify=False)"
+      good_example: "requests.get(url, verify=True)"
+
+  # ===========================================
+  # Code Quality Rules
+  # ===========================================
+  quality:
+    - id: QUAL-001
+      name: "No TODO/FIXME in Production Code"
+      severity: medium
+      description: |
+        Production code should not contain TODO, FIXME, or HACK comments.
+        These indicate incomplete work that should be tracked in the issue tracker.
+      patterns:
+        - "TODO"
+        - "FIXME"
+        - "HACK"
+        - "XXX"
+      
+    - id: QUAL-002
+      name: "Functions Must Have Docstrings"
+      severity: low
+      description: |
+        All public functions and methods must have docstrings explaining
+        their purpose, parameters, and return values.
+        
+    - id: QUAL-003
+      name: "No Dead Code"
+      severity: medium
+      description: |
+        Commented-out code blocks should be removed. Use version control
+        to track code history instead.
+        
+    - id: QUAL-004
+      name: "Meaningful Variable Names"
+      severity: low
+      description: |
+        Variable names should be descriptive and follow company naming conventions.
+        Avoid single-letter names except for loop counters.
+      bad_example: "x = get_data()"
+      good_example: "user_data = get_user_profile()"
+
+  # ===========================================
+  # Architecture Rules (SOLID, DDD, etc.)
+  # ===========================================
+  architecture:
+    - id: ARCH-001
+      name: "Single Responsibility Principle"
+      severity: medium
+      description: |
+        Classes and functions should have a single, well-defined responsibility.
+        If a class has multiple unrelated responsibilities, it should be split.
+      indicators:
+        - "Class with more than 500 lines"
+        - "Function with more than 50 lines"
+        - "Multiple unrelated methods in same class"
+        
+    - id: ARCH-002
+      name: "Dependency Injection"
+      severity: medium
+      description: |
+        Dependencies should be injected rather than instantiated within classes.
+        This improves testability and follows the Dependency Inversion Principle.
+      bad_example: |
+        class UserService:
+            def __init__(self):
+                self.db = DatabaseConnection()
+      good_example: |
+        class UserService:
+            def __init__(self, db: DatabaseConnection):
+                self.db = db
+                
+    - id: ARCH-003
+      name: "No God Classes"
+      severity: high
+      description: |
+        Classes should not be overly large or handle too many responsibilities.
+        Maximum class size is 500 lines; prefer smaller, focused classes.
+        
+    - id: ARCH-004
+      name: "Interface Segregation"
+      severity: low
+      description: |
+        Interfaces should be small and focused. Clients should not be forced
+        to depend on methods they don't use.
+        
+    - id: ARCH-005
+      name: "Bounded Context Violations"
+      severity: high
+      description: |
+        Code should respect domain boundaries. Direct database access from
+        presentation layers or cross-domain imports without proper interfaces
+        are violations.
+
+  # ===========================================
+  # Documentation Rules
+  # ===========================================
+  documentation:
+    - id: DOC-001
+      name: "API Endpoints Must Be Documented"
+      severity: medium
+      description: |
+        All API endpoints must have documentation including request/response
+        formats, authentication requirements, and example usage.
+        
+    - id: DOC-002
+      name: "Complex Logic Must Be Commented"
+      severity: low
+      description: |
+        Non-obvious algorithms or business logic should have inline comments
+        explaining the reasoning.
+        
+    - id: DOC-003
+      name: "README Required for New Modules"
+      severity: medium
+      description: |
+        New modules or packages must include a README explaining purpose,
+        usage, and any configuration requirements.
+
+  # ===========================================
+  # Company-Specific Rules
+  # ===========================================
+  company_policy:
+    - id: CORP-001
+      name: "Approved Libraries Only"
+      severity: high
+      description: |
+        Only pre-approved third-party libraries may be used. New dependencies
+        must go through the security review process.
+      
+    - id: CORP-002
+      name: "Logging Standards"
+      severity: medium
+      description: |
+        All services must use the company logging framework. Direct print
+        statements or custom logging are not allowed in production code.
+      bad_example: "print(f'Error: {error}')"
+      good_example: "logger.error('Operation failed', extra={'error': str(error)})"
+      
+    - id: CORP-003
+      name: "Error Handling Standards"
+      severity: high
+      description: |
+        Exceptions must be caught and handled appropriately. Bare except
+        clauses and swallowing exceptions are prohibited.
+      bad_example: |
+        try:
+            do_something()
+        except:
+            pass
+      good_example: |
+        try:
+            do_something()
+        except SpecificError as e:
+            logger.error("Operation failed", exc_info=True)
+            raise OperationFailedError(str(e))
+            
+    - id: CORP-004
+      name: "No Direct Database Queries in Controllers"
+      severity: high
+      description: |
+        Controllers/handlers should not contain direct database queries.
+        Use service layer or repository pattern.
+
+  # ===========================================
+  # YAGNI / KISS Rules
+  # ===========================================
+  simplicity:
+    - id: SIMP-001
+      name: "YAGNI - No Speculative Features"
+      severity: medium
+      description: |
+        Code should only implement currently required functionality.
+        Avoid adding "just in case" parameters, methods, or abstractions.
+        
+    - id: SIMP-002
+      name: "KISS - Avoid Over-Engineering"
+      severity: medium
+      description: |
+        Prefer simple solutions over complex ones. Design patterns should
+        solve actual problems, not theoretical future ones.
+      indicators:
+        - "Abstract factory for single implementation"
+        - "Multiple layers of indirection without clear benefit"
+        - "Generic type parameters unused"
+        
+    - id: SIMP-003
+      name: "No Premature Optimization"
+      severity: low
+      description: |
+        Focus on correct, readable code first. Optimize only when profiling
+        identifies actual bottlenecks.
+
+# Rule exceptions can be configured per-repository
+exceptions:
+  allowed_todos_in:
+    - "tests/"
+    - "scripts/dev/"
+  allowed_print_in:
+    - "scripts/"
+    - "cli/"
