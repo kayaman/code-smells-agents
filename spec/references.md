@@ -6,3 +6,5 @@ https://docs.github.com/en/enterprise-cloud@latest/copilot/concepts/network-sett
 
 https://docs.github.com/en/enterprise-cloud@latest/actions/reference/workflows-and-actions/workflow-syntax#jobs
 
+https://docs.github.com/en/enterprise-cloud@latest/copilot/how-tos/use-copilot-agents/coding-agent/extend-coding-agent-with-mcp
+
